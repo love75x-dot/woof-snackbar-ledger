@@ -134,33 +134,36 @@ function checkOwner_(pin) {
 // 지정한 날짜(장부 날짜 기준)의 매출: 청구금액 합계, 건수, 현장결제(초과) 합계, 건별 내역(기관·부서·이름·금액)
 function salesForDate_(dateStr) {
   const log = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_LOG);
-  if (!log || log.getLastRow() < 2) return { count: 0, total: 0, over: 0, rows: [] };
-  let count = 0, total = 0, over = 0, lateCount = 0, lateTotal = 0, lateOver = 0;
-  const rows = [], lateRows = [];
+  const inputDate = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  if (!log || log.getLastRow() < 2) return { count: 0, total: 0, over: 0, rows: [], inputDate: inputDate,
+    enteredToday: { count: 0, total: 0, over: 0, rows: [] } };
+  let count = 0, total = 0, over = 0, enteredTodayCount = 0, enteredTodayTotal = 0, enteredTodayOver = 0;
+  const rows = [], enteredTodayRows = [];
   log.getRange(2, 1, log.getLastRow() - 1, LOG_COLS).getValues().forEach(r => {
     const date = r[2] instanceof Date ? Utilities.formatDate(r[2], TZ, 'yyyy-MM-dd') : String(r[2]);
-    if (date !== dateStr) return;
     if (String(r[15] || '') === '선결제차감') return;           // 선결제에서 차감된 건도 일자별 매출에서 제외 (이미 받은 돈이라 오늘 매출이 아님)
     const ts = r[13];
     const enteredDate = ts instanceof Date ? Utilities.formatDate(ts, TZ, 'yyyy-MM-dd') : '';
     const amount = Number(r[4]) || 0, extra = Number(r[8]) || 0;
-    count++; total += Number(r[4]) || 0; over += Number(r[8]) || 0;
     const item = {
       time: ts instanceof Date ? Utilities.formatDate(ts, TZ, 'HH:mm') : '',
       enteredDate: enteredDate,
+      date: date,
       org: String(r[0]), dept: String(r[1]), names: String(r[5]), people: Number(r[6]) || 1,
       amount: amount, over: extra
     };
-    rows.push(item);
-    if (enteredDate && enteredDate !== date) {
-      lateCount++; lateTotal += amount; lateOver += extra;
-      lateRows.push(item);
+    if (enteredDate === inputDate) {
+      enteredTodayCount++; enteredTodayTotal += amount; enteredTodayOver += extra;
+      enteredTodayRows.push(item);
     }
+    if (date !== dateStr) return;
+    count++; total += amount; over += extra;
+    rows.push(item);
   });
   rows.sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
-  lateRows.sort((a, b) => a.enteredDate < b.enteredDate ? -1 : a.enteredDate > b.enteredDate ? 1 : a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
-  return { count: count, total: total, over: over, rows: rows,
-    late: { count: lateCount, total: lateTotal, over: lateOver, rows: lateRows } };
+  enteredTodayRows.sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
+  return { count: count, total: total, over: over, rows: rows, inputDate: inputDate,
+    enteredToday: { count: enteredTodayCount, total: enteredTodayTotal, over: enteredTodayOver, rows: enteredTodayRows } };
 }
 
 function ordersToday_() {

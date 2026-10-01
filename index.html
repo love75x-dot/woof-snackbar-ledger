@@ -255,11 +255,11 @@ function render(screen){
   clearInterval(K.timer); const app=$("#app"); app.replaceChildren(); app.className="wrap";
   if(S.demo) app.append(el("div",{class:"demo"},"체험 화면입니다. 실제 시트에는 저장되지 않아요. 입력할 4자리는 부서 PIN 123 + 오늘의 번호 "+demoDigit()+" = 123"+demoDigit()+" 입니다. (실제 오늘의 번호는 매장에서만 알려 줘요) 정산서 PIN은 "+demoSpin()+" (년월 4자리 예시)입니다."));
   const bar=el("div",{class:"topbar"},el("div",{class:"brand"},S.cfg.appName));
-  if(screen!==pickOrg&&screen!==kitchenLogin&&screen!==kitchenScreen&&screen!==ownerHome&&screen!==salesScreen&&screen!==editApprovalScreen&&screen!==obOrgScreen&&screen!==obDeptScreen&&screen!==obBuilder&&screen!==pdOrgScreen&&screen!==pdDeptScreen&&screen!==pdBuilder&&screen!==prepaidChargeScreen&&screen!==deptPrepaidScreen)
+  if(screen!==pickOrg&&screen!==kitchenLogin&&screen!==kitchenScreen&&screen!==ownerHome&&screen!==salesScreen&&screen!==editApprovalScreen&&screen!==obOrgScreen&&screen!==obDeptScreen&&screen!==obBuilder&&screen!==pdOrgScreen&&screen!==pdDeptScreen&&screen!==pdBuilder&&screen!==prepaidChargeScreen&&screen!==deptPrepaidScreen&&screen!==prepaidManagementScreen&&screen!==departmentRegistrationScreen)
     bar.append(el("button",{class:"homebtn",onclick:goHome},"\u2302 \uCC98\uC74C\uC73C\uB85C"));
   app.append(bar);
   screen(app);
-  if(screen!==kitchenLogin&&screen!==kitchenScreen&&screen!==ownerHome&&screen!==salesScreen&&screen!==editApprovalScreen&&screen!==obOrgScreen&&screen!==obDeptScreen&&screen!==obBuilder&&screen!==pdOrgScreen&&screen!==pdDeptScreen&&screen!==pdBuilder&&screen!==prepaidChargeScreen&&screen!==deptPrepaidScreen&&screen!==privacyScreen)
+  if(screen!==kitchenLogin&&screen!==kitchenScreen&&screen!==ownerHome&&screen!==salesScreen&&screen!==editApprovalScreen&&screen!==obOrgScreen&&screen!==obDeptScreen&&screen!==obBuilder&&screen!==pdOrgScreen&&screen!==pdDeptScreen&&screen!==pdBuilder&&screen!==prepaidChargeScreen&&screen!==deptPrepaidScreen&&screen!==prepaidManagementScreen&&screen!==departmentRegistrationScreen&&screen!==privacyScreen)
     app.append(el("button",{class:"back",style:"margin-top:26px;text-decoration:underline",onclick:()=>{S.from=screen;render(privacyScreen)}},"개인정보 처리방침"));
 }
 function pickOrg(app){
@@ -656,9 +656,21 @@ function ownerHome(app){
     el("button",{class:"big",onclick:()=>render(salesScreen)},"일자별 매출 · 마감 확인"),
     el("button",{class:"big",onclick:()=>render(editApprovalScreen)},"정산서 수정 요청 확인"),
     el("button",{class:"big",onclick:()=>{OB.org=null;OB.dept=null;OB.added=[];OB.pending=[];render(obOrgScreen)}},"누락 주문 대리 입력"),
-    el("button",{class:"big",onclick:()=>{PC.dept=null;PC.balance=0;render(prepaidChargeScreen)}},"선결제 충전"),
-    el("button",{class:"big",onclick:()=>{PD.org=null;PD.dept=null;PD.added=[];render(pdOrgScreen)}},"선결제 차감 처리 (단체 주문)"));
+    el("button",{class:"big",onclick:()=>{PM.mode="charge";render(prepaidManagementScreen)}},"선결제 관리"),
+    el("button",{class:"big",onclick:()=>{DR.result=null;render(departmentRegistrationScreen)}},"부서 등록"));
   app.append(g, el("button",{class:"back",style:"margin-top:20px",onclick:()=>{K.pin="";render(kitchenLogin)}},"‹ 로그아웃"));
+}
+const PM={mode:"charge"};
+function prepaidManagementScreen(app){
+  app.append(el("button",{class:"back",onclick:()=>render(ownerHome)},"‹ 사장님 메뉴"),el("h1",{},"선결제 관리"));
+  const tabs=el("div",{class:"tabs",role:"tablist",style:"margin-top:0"});
+  [["charge","충전"],["deduct","단체 차감"]].forEach(([mode,label])=>tabs.append(el("button",{class:"tab",role:"tab","aria-selected":String(PM.mode===mode),onclick:()=>{PM.mode=mode;render(prepaidManagementScreen)}},label)));
+  app.append(tabs);
+  if(PM.mode==="charge"){
+    app.append(el("button",{class:"big",onclick:()=>{PC.dept=null;PC.balance=0;render(prepaidChargeScreen)}},"부서 선결제 충전"));
+  }else{
+    app.append(el("button",{class:"big",onclick:()=>{PD.org=null;PD.dept=null;PD.added=[];render(pdOrgScreen)}},"단체 주문 차감"));
+  }
 }
 const OB={org:null,dept:null,date:today(),names:[""],cart:{},tab:null,added:[]};
 function obReset(){OB.date=today();OB.names=[""];OB.cart={};OB.tab=TABS[0][0];OB.pending=[]}
@@ -798,7 +810,7 @@ async function obSubmitBatch(pending){
 }
 const PD={org:null,dept:null,date:today(),added:[],balance:0};
 function pdOrgScreen(app){
-  app.append(el("button",{class:"back",onclick:()=>render(ownerHome)},"‹ 사장님 메뉴"));
+  app.append(el("button",{class:"back",onclick:()=>render(prepaidManagementScreen)},"‹ 선결제 관리"));
   app.append(el("h1",{},"선결제 차감 처리"), el("p",{class:"sub"},"부서의 단체 주문 금액을 이름 없이 선결제 잔액에서 차감합니다."));
   const g=el("div",{class:"orgs"});
   Object.entries(DATA).forEach(([code,o])=>g.append(el("button",{class:"big",onclick:()=>{PD.org=code;PD.dept=null;render(pdDeptScreen)}},o.name)));
@@ -929,7 +941,7 @@ async function submitDeptPrepaidDeduction(date,amount,people,memo){
 }
 const PC={dept:null,balance:0};
 function prepaidChargeScreen(app){
-  app.append(el("button",{class:"back",onclick:()=>render(ownerHome)},"‹ 사장님 메뉴"),el("h1",{},"선결제 충전"));
+  app.append(el("button",{class:"back",onclick:()=>render(prepaidManagementScreen)},"‹ 선결제 관리"),el("h1",{},"선결제 충전"));
   if(!PC.dept){
     const inp=el("input",{type:"search",placeholder:"부서 검색",autocomplete:"off","aria-label":"부서 검색"});
     const list=el("div",{class:"dlist"});
@@ -962,6 +974,87 @@ async function submitPrepaidCharge(amount,memo){
   try{const r=await apiFetch(CONFIG.SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
     body:JSON.stringify({action:"prepaidCharge",pin:K.pin,deptCode:PC.dept.code,amount,memo,reqId:newReqId()})});return await r.json()}
   catch(e){return {ok:false,message:"연결에 실패했어요."}}
+}
+const DR={documentsConfigured:false,result:null};
+async function requestDeptOwner(action,data={}){
+  if(S.demo)return {ok:false,message:"체험 화면에서는 실제 등록/메일 발송을 할 수 없어요."};
+  try{const r=await apiFetch(CONFIG.SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
+    body:JSON.stringify(Object.assign({action,pin:K.pin,reqId:newReqId()},data))});return await r.json()}
+  catch(e){return {ok:false,message:"연결에 실패했어요."}}
+}
+async function readDeptDocument(file){
+  if(!file)return null;
+  if(file.size>5*1024*1024)throw new Error("파일 하나당 5MB 이하로 선택해 주세요.");
+  if(!["application/pdf","image/jpeg","image/png"].includes(file.type))throw new Error("PDF, JPG, PNG 파일만 올릴 수 있어요.");
+  const dataUrl=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error("파일을 읽지 못했어요."));reader.readAsDataURL(file)});
+  return {name:file.name,mimeType:file.type,data:String(dataUrl).split(",")[1]};
+}
+function departmentRegistrationScreen(app){
+  app.append(el("button",{class:"back",onclick:()=>render(ownerHome)},"‹ 사장님 메뉴"),el("h1",{},"부서 등록"));
+  const docsStatus=el("div",{class:"sub"},"서류 등록 상태 확인 중…");
+  const docsCard=el("div",{class:"card"},el("h2",{},"발송 서류"),docsStatus);
+  const businessInput=el("input",{type:"file",accept:".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png","aria-label":"사업자등록증 파일"});
+  const bankbookInput=el("input",{type:"file",accept:".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png","aria-label":"통장사본 파일"});
+  docsCard.append(el("label",{class:"f"},"사업자등록증",businessInput),el("label",{class:"f"},"통장사본",bankbookInput));
+  const docsError=el("div",{class:"err"}),uploadButton=el("button",{class:"sec",style:"margin-top:10px"},"서류 등록/변경");
+  uploadButton.addEventListener("click",async()=>{
+    docsError.textContent="";
+    try{
+      const businessLicense=await readDeptDocument(businessInput.files[0]),bankbook=await readDeptDocument(bankbookInput.files[0]);
+      if(!businessLicense||!bankbook)throw new Error("사업자등록증과 통장사본을 모두 선택해 주세요.");
+      uploadButton.disabled=true;uploadButton.textContent="업로드 중…";
+      const result=await requestDeptOwner("deptDocsUpload",{businessLicense,bankbook});
+      if(!result.ok)throw new Error(result.message||"서류 저장에 실패했어요.");
+      DR.documentsConfigured=true;docsStatus.textContent="서류 2종이 비공개 Drive에 등록됐어요.";
+      businessInput.value="";bankbookInput.value="";
+    }catch(e){docsError.textContent=e.message||"서류 저장에 실패했어요."}
+    uploadButton.disabled=false;uploadButton.textContent="서류 등록/변경";
+  });
+  docsCard.append(docsError,uploadButton);app.append(docsCard);
+  const orgSelect=el("select",{"aria-label":"기관"});
+  Object.entries(DATA).forEach(([code,org])=>orgSelect.append(el("option",{value:code},org.name)));
+  const deptName=el("input",{type:"text",id:"drDeptName",maxlength:"100",placeholder:"예: 기획예산과",autocomplete:"organization-title"});
+  const contactName=el("input",{type:"text",id:"drContactName",maxlength:"100",placeholder:"담당자 이름",autocomplete:"name"});
+  const contactEmail=el("input",{type:"email",id:"drContactEmail",maxlength:"200",placeholder:"name@example.com",autocomplete:"email"});
+  const contactPhone=el("input",{type:"tel",id:"drContactPhone",maxlength:"50",placeholder:"010-0000-0000",autocomplete:"tel"});
+  const memo=el("textarea",{id:"drMemo",maxlength:"500",rows:"3",placeholder:"전달사항"});
+  const form=el("div",{class:"card"},el("label",{class:"f",style:"margin-top:0"},"기관",orgSelect),
+    el("label",{class:"f"},"부서명",deptName),el("label",{class:"f"},"담당자 이름",contactName),
+    el("label",{class:"f"},"담당자 이메일",contactEmail),el("label",{class:"f"},"담당자 연락처",contactPhone),
+    el("label",{class:"f"},"메모",memo));
+  const formError=el("div",{class:"err"}),registerButton=el("button",{class:"go",style:"margin-top:10px"},"부서 등록 및 서류 발송");
+  registerButton.addEventListener("click",async()=>{
+    formError.textContent="";
+    if(!DR.documentsConfigured){formError.textContent="먼저 사업자등록증과 통장사본을 등록해 주세요.";return}
+    const values={orgCode:orgSelect.value,name:deptName.value.trim(),contactName:contactName.value.trim(),email:contactEmail.value.trim(),phone:contactPhone.value.trim(),memo:memo.value.trim()};
+    if(!values.name||!values.contactName||!values.email){formError.textContent="부서명, 담당자 이름, 담당자 이메일을 입력해 주세요.";return}
+    registerButton.disabled=true;registerButton.textContent="등록 중…";
+    const result=await requestDeptOwner("registerDepartment",values);
+    registerButton.disabled=false;registerButton.textContent="부서 등록 및 서류 발송";
+    if(!result.ok){formError.textContent=result.message||"부서 등록에 실패했어요.";return}
+    const org=DATA[values.orgCode];
+    if(org&&!org.depts.some(d=>d.code===result.code))org.depts.push({code:result.code,name:values.name});
+    DR.result=Object.assign({orgName:org?org.name:"",name:values.name},result);render(departmentRegistrationScreen);
+  });
+  form.append(formError,registerButton);app.append(form);
+  if(DR.result){
+    const result=DR.result,card=el("div",{class:"card"},el("h2",{},"등록 완료"),
+      el("div",{class:"line"},el("span",{class:"t"},"부서코드"),el("span",{class:"a"},result.code)),
+      el("div",{class:"line"},el("span",{class:"t"},"부서 PIN"),el("span",{class:"a"},result.pin)),
+      el("div",{class:result.emailSent?"okline":"err"},result.emailSent?"담당자 이메일로 서류를 보냈어요.":"부서는 등록됐지만 서류 메일은 보내지 못했어요. "+(result.emailMessage||"")));
+    if(!result.emailSent){
+      const retry=el("button",{class:"sec",style:"margin-top:10px"},"서류 이메일 재전송");
+      retry.addEventListener("click",async()=>{retry.disabled=true;retry.textContent="전송 중…";const sent=await requestDeptOwner("deptDocsResend",{deptCode:result.code});retry.disabled=false;retry.textContent=sent.ok?"전송 완료":"서류 이메일 재전송";if(!sent.ok)formError.textContent=sent.message||"전송에 실패했어요."});
+      card.append(retry);
+    }
+    app.append(card);
+  }
+  if(!S.demo){
+    apiFetch(CONFIG.SCRIPT_URL+"?action=deptDocsStatus&pin="+K.pin).then(r=>r.json()).then(j=>{
+      DR.documentsConfigured=!!j.configured;
+      docsStatus.textContent=j.configured?"서류 2종이 등록되어 있어요.":"아직 서류가 등록되지 않았어요.";
+    }).catch(()=>{docsStatus.textContent="서류 상태를 불러오지 못했어요."});
+  }else docsStatus.textContent="체험 화면에서는 실제 파일 등록/발송을 할 수 없어요.";
 }
 async function fetchPendingEdits(){
   if(S.demo)return {ok:true,batches:ED.pendingBatches};

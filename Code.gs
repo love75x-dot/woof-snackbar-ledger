@@ -37,6 +37,7 @@ function onOpen() {
     .addSeparator()
     .addItem('선결제 충전 등록', 'chargePrepaid_')
     .addItem('부서별 선결제 잔액 확인', 'checkPrepaidBalances_')
+    .addItem('부서 서류 이메일 권한 확인', 'authorizeDepartmentMail_')
     .addSeparator()
     .addItem('실수 방지 설정 켜기 (경고+자동 백업)', 'setupSafety')
     .addItem('지금 바로 백업 1번 실행', 'backupNow')
@@ -46,6 +47,11 @@ function onOpen() {
     .addItem('거래내역 탭 헤더 만들기', 'setupLog')
     .addItem('정산현황 만들기/갱신', 'refreshSettlement')
     .addToUi();
+}
+
+function authorizeDepartmentMail_() {
+  const remaining = MailApp.getRemainingDailyQuota();
+  SpreadsheetApp.getUi().alert('부서 서류 이메일 발송 권한이 준비됐어요. 오늘 남은 수신자 발송 가능 수: ' + remaining);
 }
 
 // 거래내역 열 순서 (입력일시가 맨 오른쪽)
@@ -612,8 +618,156 @@ function readMaster_() {
   return rows.filter(r => r[2]).map(r => ({
     orgCode: String(r[0]), orgName: String(r[1]), code: String(r[2]), name: String(r[3]),
     pin: String(r[4]).padStart(3, '0'), active: String(r[5]).toUpperCase() !== 'N',
-    spin: normSpin_(r[6])
+    spin: normSpin_(r[6]), contactName: String(r[7] || ''), email: String(r[8] || ''),
+    phone: String(r[9] || ''), memo: String(r[10] || '')
   }));
+}
+
+const DEPT_META_HEADERS = ['담당자 이름', '담당자 이메일', '담당자 연락처', '메모'];
+const DEPT_DOC_MAX_BYTES = 5 * 1024 * 1024;
+
+function ensureDeptMetaColumns_(sh) {
+  const existing = sh.getRange(1, 8, 1, 4).getDisplayValues()[0].map(v => String(v).trim());
+  for (let i = 0; i < existing.length; i++) {
+    if (existing[i] && existing[i] !== DEPT_META_HEADERS[i]) {
+      return { ok: false, message: '부서마스터 H~K열에 다른 정보가 있어 담당자 열을 추가할 수 없어요.' };
+    }
+  }
+  sh.getRange(1, 8, 1, 4).setValues([DEPT_META_HEADERS]);
+  return { ok: true };
+}
+
+function departmentDocsStatus_() {
+  const props = PropertiesService.getScriptProperties();
+  const businessId = props.getProperty('DEPT_BUSINESS_FILE_ID') || '';
+  const bankbookId = props.getProperty('DEPT_BANKBOOK_FILE_ID') || '';
+  if (!businessId || !bankbookId) return { configured: false };
+  try {
+    return { configured: true, businessName: DriveApp.getFileById(businessId).getName(), bankbookName: DriveApp.getFileById(bankbookId).getName() };
+  } catch (err) {
+    return { configured: false };
+  }
+}
+
+function uploadDepartmentDocsOwner_(b) {
+  const chk = checkOwner_(b.pin);
+  if (!chk.ok) return json_(chk);
+  const files = [b.businessLicense, b.bankbook];
+  const types = ['application/pdf', 'image/jpeg', 'image/png'];
+  for (const file of files) {
+    if (!file || !file.name || !file.data || types.indexOf(String(file.mimeType)) < 0) {
+      return json_({ ok: false, message: '사업자등록증과 통장사본을 PDF, JPG, PNG 중 하나로 선택해 주세요.' });
+    }
+    if (String(file.data).length > Math.ceil(DEPT_DOC_MAX_BYTES * 4 / 3) + 8) {
+      return json_({ ok: false, message: '파일 하나당 5MB 이하로 선택해 주세요.' });
+    }
+  }
+  const props = PropertiesService.getScriptProperties();
+  let folder;
+  try { folder = DriveApp.getFolderById(props.getProperty('DEPT_DOC_FOLDER_ID')); }
+  catch (err) {
+    folder = DriveApp.createFolder('우프스낵바 부서 안내 서류');
+    props.setProperty('DEPT_DOC_FOLDER_ID', folder.getId());
+  }
+  const store = (file, fallback) => {
+    const bytes = Utilities.base64Decode(String(file.data));
+    if (bytes.length > DEPT_DOC_MAX_BYTES) throw new Error('파일 하나당 5MB 이하로 선택해 주세요.');
+    const safeName = String(file.name).replace(/[\\/:*?"<>|]/g, '_').slice(0, 100) || fallback;
+    return folder.createFile(Utilities.newBlob(bytes, String(file.mimeType), safeName));
+  };
+  try {
+    const businessFile = store(b.businessLicense, '사업자등록증');
+    const bankbookFile = store(b.bankbook, '통장사본');
+    props.setProperties({ DEPT_BUSINESS_FILE_ID: businessFile.getId(), DEPT_BANKBOOK_FILE_ID: bankbookFile.getId() });
+    return json_({ ok: true, documents: departmentDocsStatus_() });
+  } catch (err) {
+    return json_({ ok: false, message: err.message || '문서 저장에 실패했어요.' });
+  }
+}
+
+function nextDepartmentCode_(orgCode, departments) {
+  let max = 0;
+  const prefix = orgCode + '-';
+  departments.forEach(d => {
+    if (d.orgCode !== orgCode || d.code.indexOf(prefix) !== 0) return;
+    const suffix = d.code.slice(prefix.length);
+    if (/^\d{3}$/.test(suffix)) max = Math.max(max, Number(suffix));
+  });
+  if (max >= 999) return '';
+  return prefix + String(max + 1).padStart(3, '0');
+}
+
+function nextDepartmentPin_(departments) {
+  const used = new Set(departments.map(d => d.pin));
+  if (used.size >= 1000) return '';
+  let pin;
+  do { pin = String(Math.floor(Math.random() * 1000)).padStart(3, '0'); } while (used.has(pin));
+  return pin;
+}
+
+function emailDepartmentDocs_(dept) {
+  const props = PropertiesService.getScriptProperties();
+  const businessId = props.getProperty('DEPT_BUSINESS_FILE_ID');
+  const bankbookId = props.getProperty('DEPT_BANKBOOK_FILE_ID');
+  if (!businessId || !bankbookId) throw new Error('발송할 사업자등록증과 통장사본을 먼저 등록해 주세요.');
+  MailApp.sendEmail({
+    to: dept.email,
+    subject: '[우프스낵바] ' + dept.orgName + ' ' + dept.name + ' 안내 서류',
+    body: dept.contactName + ' 담당자님, 안녕하세요.\n\n사업자등록증과 통장사본을 첨부해 드립니다.\n\n우프스낵바',
+    name: '우프스낵바',
+    attachments: [DriveApp.getFileById(businessId).getBlob(), DriveApp.getFileById(bankbookId).getBlob()]
+  });
+}
+
+function registerDepartmentOwner_(b) {
+  const chk = checkOwner_(b.pin);
+  if (!chk.ok) return json_(chk);
+  if (!departmentDocsStatus_().configured) return json_({ ok: false, message: '부서를 등록하기 전에 사업자등록증과 통장사본을 먼저 올려 주세요.' });
+  const orgCode = String(b.orgCode || '').trim();
+  const name = String(b.name || '').trim().slice(0, 100);
+  const contactName = String(b.contactName || '').trim().slice(0, 100);
+  const email = String(b.email || '').trim().slice(0, 200);
+  const phone = String(b.phone || '').trim().slice(0, 50);
+  const memo = String(b.memo || '').trim().slice(0, 500);
+  if (!name || !contactName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return json_({ ok: false, message: '기관, 부서명, 담당자 이름과 올바른 담당자 이메일을 입력해 주세요.' });
+  }
+  const departments = readMaster_();
+  const org = departments.filter(d => d.orgCode === orgCode)[0];
+  if (!org) return json_({ ok: false, message: '기관을 찾을 수 없어요.' });
+  if (departments.some(d => d.orgCode === orgCode && d.name.toLowerCase() === name.toLowerCase())) {
+    return json_({ ok: false, message: '같은 기관에 동일한 부서명이 이미 등록되어 있어요.' });
+  }
+  const code = nextDepartmentCode_(orgCode, departments);
+  const pin = nextDepartmentPin_(departments);
+  if (!code || !pin) return json_({ ok: false, message: '부서코드 또는 PIN을 더 만들 수 없어요. 관리자에게 문의해 주세요.' });
+  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_MASTER);
+  const headers = ensureDeptMetaColumns_(sh);
+  if (!headers.ok) return json_(headers);
+  const row = sh.getLastRow() + 1;
+  sh.getRange(row, 1, 1, 11).setNumberFormat('@').setValues([[
+    orgCode, org.orgName, code, name, pin, 'Y', '', contactName, email, phone, memo
+  ]]);
+  const dept = { orgCode: orgCode, orgName: org.orgName, code: code, name: name, pin: pin, contactName: contactName, email: email };
+  try {
+    emailDepartmentDocs_(dept);
+    return json_({ ok: true, code: code, pin: pin, emailSent: true });
+  } catch (err) {
+    return json_({ ok: true, code: code, pin: pin, emailSent: false, emailMessage: err.message || '이메일 전송에 실패했어요.' });
+  }
+}
+
+function resendDepartmentDocsOwner_(b) {
+  const chk = checkOwner_(b.pin);
+  if (!chk.ok) return json_(chk);
+  const dept = readMaster_().filter(d => d.code === String(b.deptCode || ''))[0];
+  if (!dept || !dept.email) return json_({ ok: false, message: '담당자 이메일이 등록되어 있지 않아요.' });
+  try {
+    emailDepartmentDocs_(dept);
+    return json_({ ok: true });
+  } catch (err) {
+    return json_({ ok: false, message: err.message || '이메일 전송에 실패했어요.' });
+  }
 }
 
 function json_(o) {
@@ -701,6 +855,11 @@ function doGet(e) {
     const chk = checkPin_(dept, p.pin);
     if (!chk.ok) return json_(chk);
     return json_({ ok: true, balance: prepaidBalance_(dept.code) });
+  }
+  if (p.action === 'deptDocsStatus') {
+    const chk = checkOwner_(p.pin);
+    if (!chk.ok) return json_(chk);
+    return json_(Object.assign({ ok: true }, departmentDocsStatus_()));
   }
   if (p.action === 'prepaidBalances') {
     const chk = checkOwner_(p.pin);
@@ -1137,6 +1296,9 @@ function doPost(e) {
       if (b.action === 'prepaidDeduct') return prepaidDeductSimple_(b); // 사장님: 선결제 잔액에서 금액만 바로 차감
       if (b.action === 'prepaidDeptDeduct') return prepaidDeductDept_(b);
       if (b.action === 'prepaidCharge') return prepaidChargeOwner_(b);
+      if (b.action === 'deptDocsUpload') return uploadDepartmentDocsOwner_(b);
+      if (b.action === 'registerDepartment') return registerDepartmentOwner_(b);
+      if (b.action === 'deptDocsResend') return resendDepartmentDocsOwner_(b);
       const dept = readMaster_().filter(d => d.code === b.deptCode)[0];
       if (!dept) return json_({ ok: false, message: '부서를 찾을 수 없어요.' });
       const chk = checkPin_(dept, b.pin);

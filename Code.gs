@@ -140,7 +140,6 @@ function salesForDate_(dateStr) {
   log.getRange(2, 1, log.getLastRow() - 1, LOG_COLS).getValues().forEach(r => {
     const date = r[2] instanceof Date ? Utilities.formatDate(r[2], TZ, 'yyyy-MM-dd') : String(r[2]);
     if (date !== dateStr) return;
-    if (String(r[14] || '').trim()) return;                    // 사장님 대리입력 건은 일자별 매출에서 제외
     if (String(r[15] || '') === '선결제차감') return;           // 선결제에서 차감된 건도 일자별 매출에서 제외 (이미 받은 돈이라 오늘 매출이 아님)
     const ts = r[13];
     const enteredDate = ts instanceof Date ? Utilities.formatDate(ts, TZ, 'yyyy-MM-dd') : '';

@@ -38,7 +38,11 @@ button{font:inherit;color:inherit;cursor:pointer}
 button:focus-visible,input:focus-visible{outline:3px solid var(--mustard);outline-offset:2px}
 .big{width:100%;text-align:left;background:var(--paper);border:1.5px solid var(--line);border-radius:12px;padding:16px;font-size:18px;font-family:"Do Hyeon",sans-serif}
 .big:active{background:var(--mustard)}
-input[type=text],input[type=date],input[type=password],input[type=search]{width:100%;font:inherit;font-size:17px;padding:13px 14px;border:1.5px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink)}
+:where(input:not([type=checkbox]):not([type=radio]):not([type=file]),select,textarea){box-sizing:border-box;width:100%;min-height:48px;font:inherit;font-size:16px;padding:12px 14px;border:1.5px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink)}
+textarea{min-height:96px;resize:vertical}
+:where(input[type=file]){box-sizing:border-box;width:100%;min-height:44px;font:inherit;padding:9px 10px;border:1.5px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink)}
+.checkrow{display:flex;align-items:center;gap:10px;margin-top:14px;font-size:15px;color:var(--ink)}
+.checkrow input{width:20px;height:20px;flex:0 0 auto}
 label.f{display:block;font-size:14px;color:var(--muted);margin:12px 0 6px}
 .dlist{max-height:46vh;overflow:auto;margin-top:10px;border:1.5px solid var(--line);border-radius:10px}
 .dlist button{display:block;width:100%;text-align:left;background:var(--paper);border:0;border-bottom:1px solid var(--line);padding:14px;font-size:16px}
@@ -1018,19 +1022,22 @@ function departmentRegistrationScreen(app){
   const contactEmail=el("input",{type:"email",id:"drContactEmail",maxlength:"200",placeholder:"name@example.com",autocomplete:"email"});
   const contactPhone=el("input",{type:"tel",id:"drContactPhone",maxlength:"50",placeholder:"010-0000-0000",autocomplete:"tel"});
   const memo=el("textarea",{id:"drMemo",maxlength:"500",rows:"3",placeholder:"전달사항"});
+  const sendDocsInput=el("input",{type:"checkbox",id:"drSendDocs"});
+  const sendDocsChoice=el("label",{class:"checkrow",for:"drSendDocs"},sendDocsInput,el("span",{},"사업자등록증과 통장사본 이메일 발송"));
   const form=el("div",{class:"card"},el("label",{class:"f",style:"margin-top:0"},"기관",orgSelect),
     el("label",{class:"f"},"부서명",deptName),el("label",{class:"f"},"담당자 이름",contactName),
     el("label",{class:"f"},"담당자 이메일",contactEmail),el("label",{class:"f"},"담당자 연락처",contactPhone),
-    el("label",{class:"f"},"메모",memo));
-  const formError=el("div",{class:"err"}),registerButton=el("button",{class:"go",style:"margin-top:10px"},"부서 등록 및 서류 발송");
+    el("label",{class:"f"},"메모",memo),sendDocsChoice);
+  const formError=el("div",{class:"err"}),registerButton=el("button",{class:"go",style:"margin-top:10px"},"부서 등록");
+  sendDocsInput.addEventListener("change",()=>{registerButton.textContent=sendDocsInput.checked?"부서 등록 및 서류 발송":"부서 등록"});
   registerButton.addEventListener("click",async()=>{
     formError.textContent="";
-    if(!DR.documentsConfigured){formError.textContent="먼저 사업자등록증과 통장사본을 등록해 주세요.";return}
+    if(sendDocsInput.checked&&!DR.documentsConfigured){formError.textContent="먼저 사업자등록증과 통장사본을 등록해 주세요.";return}
     const values={orgCode:orgSelect.value,name:deptName.value.trim(),contactName:contactName.value.trim(),email:contactEmail.value.trim(),phone:contactPhone.value.trim(),memo:memo.value.trim()};
-    if(!values.name||!values.contactName||!values.email){formError.textContent="부서명, 담당자 이름, 담당자 이메일을 입력해 주세요.";return}
+    if(!values.name||(sendDocsInput.checked&&(!values.contactName||!values.email))){formError.textContent=sendDocsInput.checked?"부서명, 담당자 이름, 담당자 이메일을 입력해 주세요.":"부서명을 입력해 주세요.";return}
     registerButton.disabled=true;registerButton.textContent="등록 중…";
-    const result=await requestDeptOwner("registerDepartment",values);
-    registerButton.disabled=false;registerButton.textContent="부서 등록 및 서류 발송";
+    const result=await requestDeptOwner("registerDepartment",Object.assign(values,{sendDocs:sendDocsInput.checked}));
+    registerButton.disabled=false;registerButton.textContent=sendDocsInput.checked?"부서 등록 및 서류 발송":"부서 등록";
     if(!result.ok){formError.textContent=result.message||"부서 등록에 실패했어요.";return}
     const org=DATA[values.orgCode];
     if(org&&!org.depts.some(d=>d.code===result.code))org.depts.push({code:result.code,name:values.name});
@@ -1041,8 +1048,8 @@ function departmentRegistrationScreen(app){
     const result=DR.result,card=el("div",{class:"card"},el("h2",{},"등록 완료"),
       el("div",{class:"line"},el("span",{class:"t"},"부서코드"),el("span",{class:"a"},result.code)),
       el("div",{class:"line"},el("span",{class:"t"},"부서 PIN"),el("span",{class:"a"},result.pin)),
-      el("div",{class:result.emailSent?"okline":"err"},result.emailSent?"담당자 이메일로 서류를 보냈어요.":"부서는 등록됐지만 서류 메일은 보내지 못했어요. "+(result.emailMessage||"")));
-    if(!result.emailSent){
+      el("div",{class:!result.sendDocs||result.emailSent?"okline":"err"},!result.sendDocs?"부서를 등록했어요. 서류 메일 발송은 선택하지 않았어요.":result.emailSent?"담당자 이메일로 서류를 보냈어요.":"부서는 등록됐지만 서류 메일은 보내지 못했어요. "+(result.emailMessage||"")));
+    if(result.sendDocs&&!result.emailSent){
       const retry=el("button",{class:"sec",style:"margin-top:10px"},"서류 이메일 재전송");
       retry.addEventListener("click",async()=>{retry.disabled=true;retry.textContent="전송 중…";const sent=await requestDeptOwner("deptDocsResend",{deptCode:result.code});retry.disabled=false;retry.textContent=sent.ok?"전송 완료":"서류 이메일 재전송";if(!sent.ok)formError.textContent=sent.message||"전송에 실패했어요."});
       card.append(retry);

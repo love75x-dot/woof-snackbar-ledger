@@ -722,15 +722,19 @@ function emailDepartmentDocs_(dept) {
 function registerDepartmentOwner_(b) {
   const chk = checkOwner_(b.pin);
   if (!chk.ok) return json_(chk);
-  if (!departmentDocsStatus_().configured) return json_({ ok: false, message: '부서를 등록하기 전에 사업자등록증과 통장사본을 먼저 올려 주세요.' });
+  const sendDocs = b.sendDocs === true;
+  if (sendDocs && !departmentDocsStatus_().configured) return json_({ ok: false, message: '서류를 메일로 보내려면 사업자등록증과 통장사본을 먼저 올려 주세요.' });
   const orgCode = String(b.orgCode || '').trim();
   const name = String(b.name || '').trim().slice(0, 100);
   const contactName = String(b.contactName || '').trim().slice(0, 100);
   const email = String(b.email || '').trim().slice(0, 200);
   const phone = String(b.phone || '').trim().slice(0, 50);
   const memo = String(b.memo || '').trim().slice(0, 500);
-  if (!name || !contactName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return json_({ ok: false, message: '기관, 부서명, 담당자 이름과 올바른 담당자 이메일을 입력해 주세요.' });
+  if (!name || (sendDocs && (!contactName || !email))) {
+    return json_({ ok: false, message: '부서명과 서류 수신 담당자 정보를 입력해 주세요.' });
+  }
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return json_({ ok: false, message: '담당자 이메일 주소를 확인해 주세요.' });
   }
   const departments = readMaster_();
   const org = departments.filter(d => d.orgCode === orgCode)[0];
@@ -749,11 +753,12 @@ function registerDepartmentOwner_(b) {
     orgCode, org.orgName, code, name, pin, 'Y', '', contactName, email, phone, memo
   ]]);
   const dept = { orgCode: orgCode, orgName: org.orgName, code: code, name: name, pin: pin, contactName: contactName, email: email };
+  if (!sendDocs) return json_({ ok: true, code: code, pin: pin, sendDocs: false, emailSent: false });
   try {
     emailDepartmentDocs_(dept);
-    return json_({ ok: true, code: code, pin: pin, emailSent: true });
+    return json_({ ok: true, code: code, pin: pin, sendDocs: true, emailSent: true });
   } catch (err) {
-    return json_({ ok: true, code: code, pin: pin, emailSent: false, emailMessage: err.message || '이메일 전송에 실패했어요.' });
+    return json_({ ok: true, code: code, pin: pin, sendDocs: true, emailSent: false, emailMessage: err.message || '이메일 전송에 실패했어요.' });
   }
 }
 

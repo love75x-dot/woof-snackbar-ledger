@@ -131,6 +131,8 @@ td,th{border-bottom:1px solid var(--line);padding:6px 4px;text-align:left;white-
 .salesbox{background:var(--paper);border:2px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
 .salesbox .big2{font-family:"Do Hyeon",sans-serif;font-size:40px;line-height:1.1}
 .salesbox .sub2{color:var(--muted);font-size:14px;margin-top:2px}
+.lateSales{margin:-4px 0 14px;padding:10px 12px;border:1.5px solid var(--ketchup);border-radius:10px;background:var(--ketchup-bg)}
+.lateSales summary{cursor:pointer;color:var(--ketchup);font-weight:700}
 .daynav{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:14px}
 .daynav button{width:42px;height:42px;border-radius:10px;border:1.5px solid var(--line);background:var(--paper);font-size:20px}
 .daynav .dtxt{font-family:"Do Hyeon",sans-serif;font-size:20px;min-width:150px;text-align:center}
@@ -939,6 +941,15 @@ function salesScreen(app){
       el("div",{class:"big2"},won(j.total)),
       el("div",{class:"sub2"},"청구 매출 · 주문 "+j.count+"건"+(j.over>0?" · 현장결제(별도) "+won(j.over):"")));
     box.append(sb);
+    if(j.late&&j.late.count){
+      const detail=el("details",{class:"lateSales"});
+      detail.append(el("summary",{},"다른 날짜에 입력된 주문 "+won(j.late.total)+" ("+j.late.count+"건)"+(j.late.over>0?" · 현장결제 "+won(j.late.over):"")));
+      const lt=el("table",{class:"mtable"});
+      lt.append(el("tr",{},el("th",{},"기관"),el("th",{},"부서"),el("th",{},"이름"),el("th",{},"입력일시"),el("th",{style:"text-align:right"},"청구"),el("th",{style:"text-align:right"},"현장결제")));
+      j.late.rows.forEach(r=>lt.append(el("tr",{},el("td",{},r.org),el("td",{},r.dept),el("td",{},el("span",{class:"pc"},(r.people||1)+"명"),r.names),el("td",{},r.enteredDate+" "+r.time),el("td",{class:"r"},won(r.amount)),el("td",{class:"r"},won(r.over)))));
+      detail.append(el("div",{class:"scroll"},lt));
+      box.append(detail);
+    }
     if(!j.rows.length){box.append(el("div",{class:"card"},el("div",{class:"empty"},"이 날짜에는 이용 내역이 없어요.")));return}
     const t=el("table",{class:"mtable"});
     t.append(el("tr",{},el("th",{},"기관"),el("th",{},"부서"),el("th",{},"이름"),el("th",{style:"text-align:right"},"금액")));

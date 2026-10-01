@@ -912,8 +912,9 @@ function deptPrepaidScreen(app){
 }
 async function fetchDeptPrepaidBalance(){
   if(S.demo)return {ok:true,balance:S.demoBalances&&S.demoBalances[S.dept.code]!==undefined?S.demoBalances[S.dept.code]:18000};
-  try{const r=await apiFetch(CONFIG.SCRIPT_URL+"?action=deptPrepaidBalance&pin="+K.pin+"&dept="+encodeURIComponent(S.dept.code));const j=await r.json();
-    if(!j.ok||typeof j.balance!=="number")return {ok:false,message:"Apps Script 최신 버전 배포 후 이용할 수 있어요."};return j}
+  try{const r=await apiFetch(CONFIG.SCRIPT_URL+"?action=deptPrepaidBalance&pin="+S.pin+"&dept="+encodeURIComponent(S.dept.code));const j=await r.json();
+    if(!j.ok)return {ok:false,message:j.message||"선결제 잔액을 불러오지 못했어요."};
+    if(typeof j.balance!=="number")return {ok:false,message:"Apps Script 최신 버전 배포 후 이용할 수 있어요."};return j}
   catch(e){return {ok:false,message:"연결에 실패했어요."}}
 }
 async function submitDeptPrepaidDeduction(date,amount,people,memo){
@@ -923,7 +924,7 @@ async function submitDeptPrepaidDeduction(date,amount,people,memo){
     S.demoBalances=S.demoBalances||{};S.demoBalances[S.dept.code]=balance-amount;return {ok:true,balance:balance-amount};
   }
   try{const r=await apiFetch(CONFIG.SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
-    body:JSON.stringify({action:"prepaidDeptDeduct",pin:K.pin,deptCode:S.dept.code,date,amount,people,memo,reqId:newReqId()})});return await r.json()}
+    body:JSON.stringify({action:"prepaidDeptDeduct",pin:S.pin,deptCode:S.dept.code,date,amount,people,memo,reqId:newReqId()})});return await r.json()}
   catch(e){return {ok:false,message:"연결에 실패했어요."}}
 }
 const PC={dept:null,balance:0};

@@ -49,16 +49,15 @@ function onOpen() {
 }
 
 // 거래내역 열 순서 (입력일시가 맨 오른쪽)
-// A기관 B부서 C날짜 D메뉴 E금액(청구) F이름 G인원 H한도초과 I초과금액(현장결제) J기관코드 K부서코드 L날짜확인 M포장완료 N입력일시
+// A기관 B부서 C날짜 D메뉴 E금액(청구) F이름 G인원 H한도초과 I현장결제액 J기관코드 K부서코드 L날짜확인 M포장완료 N입력일시
 const TZ = 'Asia/Seoul';
-const LOG_COLS = 16;  // 15번째 '구분': 비어있으면 정상, '사장님 대리입력'이면 사장님이 대신 넣은 것
-                       // 16번째 '결제방식': 비어있으면 일반 청구, '선결제차감'이면 미리 받은 선결제에서 자동으로 깎인 것 (월 정산서에서 제외)
+const LOG_COLS = 17;  // 15번째 '구분', 16번째 '결제방식', 17번째 '선결제 사용액'
 
 function setupLog() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sh = ss.getSheetByName(SHEET_LOG) || ss.insertSheet(SHEET_LOG);
   if (sh.getLastRow() === 0) {
-    sh.appendRow(['기관', '부서', '날짜', '메뉴', '금액(청구)', '이름', '인원', '한도초과', '초과금액(현장결제)', '기관코드', '부서코드', '날짜확인', '포장완료', '입력일시', '구분', '결제방식']);
+    sh.appendRow(['기관', '부서', '날짜', '메뉴', '금액(청구)', '이름', '인원', '한도초과', '현장결제액', '기관코드', '부서코드', '날짜확인', '포장완료', '입력일시', '구분', '결제방식', '선결제 사용액']);
     sh.getRange('C:C').setNumberFormat('@');
     sh.getRange('N:N').setNumberFormat('yyyy-mm-dd hh:mm');
     sh.getRange('O:O').setNumberFormat('@');
@@ -69,6 +68,11 @@ function setupLog() {
       .whenFormulaSatisfied('=$L2<>""').setBackground('#FCE4E0').setRanges([sh.getRange('A2:N')]).build();
     sh.setConditionalFormatRules([rule]);
   }
+  if (String(sh.getRange(1, 17).getValue()).trim() !== '선결제 사용액') {
+    sh.getRange(1, 17).setValue('선결제 사용액');
+  }
+  sh.getRange(1, 9).setValue('현장결제액');
+  sh.getRange('Q:Q').setNumberFormat('#,##0');
 }
 
 // 장부 날짜와 실제 입력일 비교 → 어제/그제 날짜로 적은 경우 표시
@@ -135,35 +139,41 @@ function checkOwner_(pin) {
 function salesForDate_(dateStr) {
   const log = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_LOG);
   const inputDate = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
-  if (!log || log.getLastRow() < 2) return { count: 0, total: 0, over: 0, rows: [], inputDate: inputDate,
-    enteredToday: { count: 0, total: 0, over: 0, rows: [] } };
-  let count = 0, total = 0, over = 0, enteredTodayCount = 0, enteredTodayTotal = 0, enteredTodayOver = 0;
+  if (!log || log.getLastRow() < 2) return { count: 0, total: 0, over: 0, prepaid: 0, gross: 0, rows: [], inputDate: inputDate,
+    enteredToday: { count: 0, total: 0, over: 0, prepaid: 0, gross: 0, rows: [] } };
+  let count = 0, total = 0, over = 0, prepaid = 0, gross = 0;
+  let enteredTodayCount = 0, enteredTodayTotal = 0, enteredTodayOver = 0, enteredTodayPrepaid = 0, enteredTodayGross = 0;
   const rows = [], enteredTodayRows = [];
   log.getRange(2, 1, log.getLastRow() - 1, LOG_COLS).getValues().forEach(r => {
     const date = r[2] instanceof Date ? Utilities.formatDate(r[2], TZ, 'yyyy-MM-dd') : String(r[2]);
-    if (String(r[15] || '') === '선결제차감') return;           // 선결제에서 차감된 건도 일자별 매출에서 제외 (이미 받은 돈이라 오늘 매출이 아님)
+    const paymentMethod = String(r[15] || '');
     const ts = r[13];
     const enteredDate = ts instanceof Date ? Utilities.formatDate(ts, TZ, 'yyyy-MM-dd') : '';
     const amount = Number(r[4]) || 0, extra = Number(r[8]) || 0;
+    const prepaidAmount = Number(r[16]) || (paymentMethod === '선결제차감' ? amount : 0);
+    const billableAmount = paymentMethod.indexOf('선결제') === 0 ? 0 : amount;
+    const saleAmount = billableAmount + extra + prepaidAmount;
     const item = {
       time: ts instanceof Date ? Utilities.formatDate(ts, TZ, 'HH:mm') : '',
       enteredDate: enteredDate,
       date: date,
       org: String(r[0]), dept: String(r[1]), names: String(r[5]), people: Number(r[6]) || 1,
-      amount: amount, over: extra
+      amount: billableAmount, over: extra, prepaid: prepaidAmount, gross: saleAmount
     };
     if (enteredDate === inputDate) {
-      enteredTodayCount++; enteredTodayTotal += amount; enteredTodayOver += extra;
+      enteredTodayCount++; enteredTodayTotal += billableAmount; enteredTodayOver += extra;
+      enteredTodayPrepaid += prepaidAmount; enteredTodayGross += saleAmount;
       enteredTodayRows.push(item);
     }
     if (date !== dateStr) return;
-    count++; total += amount; over += extra;
+    count++; total += billableAmount; over += extra; prepaid += prepaidAmount; gross += saleAmount;
     rows.push(item);
   });
   rows.sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
   enteredTodayRows.sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
-  return { count: count, total: total, over: over, rows: rows, inputDate: inputDate,
-    enteredToday: { count: enteredTodayCount, total: enteredTodayTotal, over: enteredTodayOver, rows: enteredTodayRows } };
+  return { count: count, total: total, over: over, prepaid: prepaid, gross: gross, rows: rows, inputDate: inputDate,
+    enteredToday: { count: enteredTodayCount, total: enteredTodayTotal, over: enteredTodayOver,
+      prepaid: enteredTodayPrepaid, gross: enteredTodayGross, rows: enteredTodayRows } };
 }
 
 function ordersToday_() {
@@ -290,7 +300,7 @@ function refreshSettlementFor_(month) {
     log.getRange(2, 1, log.getLastRow() - 1, LOG_COLS).getValues().forEach(r => {
       const date = r[2] instanceof Date ? Utilities.formatDate(r[2], tz, 'yyyy-MM-dd') : String(r[2]);
       if (date.indexOf(month) !== 0) return;
-      if (String(r[15] || '') === '선결제차감') return; // 이미 선결제로 낸 건 청구합계에서 제외
+      if (String(r[15] || '').indexOf('선결제') === 0) return; // 선결제 처리된 건은 청구합계에서 제외
       const code = String(r[10]);
       if (!agg[code]) agg[code] = { org: r[0], dept: r[1], n: 0, sum: 0 };
       agg[code].n++; agg[code].sum += Number(r[4]) || 0;
@@ -685,6 +695,13 @@ function doGet(e) {
     if (!chk.ok) return json_(chk);
     return json_({ ok: true, balance: prepaidBalance_(String(p.dept || '')) });
   }
+  if (p.action === 'deptPrepaidBalance') {
+    const dept = readMaster_().filter(d => d.code === p.dept)[0];
+    if (!dept) return json_({ ok: false, message: '부서를 찾을 수 없어요.' });
+    const chk = checkPin_(dept, p.pin);
+    if (!chk.ok) return json_(chk);
+    return json_({ ok: true, balance: prepaidBalance_(dept.code) });
+  }
   if (p.action === 'prepaidBalances') {
     const chk = checkOwner_(p.pin);
     if (!chk.ok) return json_(chk);
@@ -739,7 +756,7 @@ function statementRows_(deptCode, month) {
   const out = [];
   log.getRange(2, 1, log.getLastRow() - 1, LOG_COLS).getValues().forEach((r, i) => {
     if (String(r[10]) !== deptCode) return;
-    if (String(r[15] || '') === '선결제차감') return; // 이미 선결제로 낸 건 정산서(청구)에서 제외
+    if (String(r[15] || '').indexOf('선결제') === 0) return; // 선결제 처리된 건은 정산서(청구)에서 제외
     const date = r[2] instanceof Date ? Utilities.formatDate(r[2], tz, 'yyyy-MM-dd') : String(r[2]);
     if (date.indexOf(month) !== 0) return;
     const ts = r[13];
@@ -855,7 +872,7 @@ function checkDownload_(b) {
 
 // 주문 저장
 // 주문 한 건을 실제로 거래내역에 기록하는 공용 함수.
-// tag가 비어있으면 '정상 입력'(담당자가 직접), '사장님 대리입력'이면 사장님이 대신 넣은 건(일자별 매출에서 제외).
+// tag가 비어있으면 담당자 입력, '사장님 대리입력'이면 사장님 입력이며 둘 다 일자별 매출에 포함돼요.
 // ---------- 선결제(연말 충전) 잔액 ----------
 // '선결제' 시트는 통장 거래내역처럼, 충전(+)과 차감(-)이 한 줄씩 쌓이는 원장이에요.
 // 잔액 = 그 부서의 충전 합계 - 차감 합계. 시트에 직접 행을 추가하지 않아도,
@@ -886,6 +903,22 @@ function prepaidBalance_(deptCode) {
   return bal;
 }
 
+function addPrepaidCharge_(dept, amount, memo) {
+  setupPrepaid_().appendRow([new Date(), dept.orgName, dept.name, dept.code, '충전', amount, memo || '']);
+  return prepaidBalance_(dept.code);
+}
+
+function prepaidChargeOwner_(b) {
+  const chk = checkOwner_(b.pin);
+  if (!chk.ok) return json_(chk);
+  const dept = readMaster_().filter(d => d.code === String(b.deptCode || ''))[0];
+  if (!dept) return json_({ ok: false, message: '부서를 찾을 수 없어요.' });
+  const amount = Math.max(0, Math.round(Number(b.amount) || 0));
+  if (amount <= 0) return json_({ ok: false, message: '충전 금액을 입력해 주세요.' });
+  const balance = addPrepaidCharge_(dept, amount, String(b.memo || '').trim().slice(0, 100));
+  return json_({ ok: true, amount: amount, balance: balance });
+}
+
 function deductPrepaid_(dept, amount, memo) {
   const sh = setupPrepaid_();
   sh.appendRow([new Date(), dept.orgName, dept.name, dept.code, '차감', amount, memo || '']);
@@ -893,12 +926,24 @@ function deductPrepaid_(dept, amount, memo) {
 
 // 사장님 화면의 '선결제 차감 처리' 전용 기능. 단체 주문처럼 참석자 이름을 일일이 적기 어려운 경우,
 // 금액만 입력하면 잔액에서 바로 차감돼요. 이름 목록 대신 메모 한 줄과 인원수만 받아요.
-// 거래내역에는 기록을 남기되(추후 확인용), 한도·초과 계산은 하지 않고, 일자별 매출에도 잡히지 않아요.
+// 거래내역에 기록하며, 차감한 선결제 금액은 주문일 매출에 포함하고 월 정산서에서는 제외해요.
 function prepaidDeductSimple_(b) {
   const chk = checkOwner_(b.pin);
   if (!chk.ok) return json_(chk);
   const dept = readMaster_().filter(d => d.code === b.deptCode)[0];
   if (!dept) return json_({ ok: false, message: '부서를 찾을 수 없어요.' });
+  return prepaidDeductForDept_(dept, b);
+}
+
+function prepaidDeductDept_(b) {
+  const dept = readMaster_().filter(d => d.code === String(b.deptCode || ''))[0];
+  if (!dept) return json_({ ok: false, message: '부서를 찾을 수 없어요.' });
+  const chk = checkPin_(dept, b.pin);
+  if (!chk.ok) return json_(chk);
+  return prepaidDeductForDept_(dept, b);
+}
+
+function prepaidDeductForDept_(dept, b) {
   const amount = Math.max(0, Math.round(Number(b.amount) || 0));
   if (amount <= 0) return json_({ ok: false, message: '금액을 입력해 주세요.' });
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.date))) return json_({ ok: false, message: '날짜 형식이 올바르지 않아요.' });
@@ -913,10 +958,10 @@ function prepaidDeductSimple_(b) {
   const log = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_LOG);
   const row = log.getLastRow() + 1;
   const rng = log.getRange(row, 1, 1, LOG_COLS);
-  rng.setNumberFormats([['@', '@', '@', '@', '#,##0', '@', '0', '@', '#,##0', '@', '@', '@', '@', 'yyyy-mm-dd hh:mm', '@', '@']]);
+  rng.setNumberFormats([['@', '@', '@', '@', '#,##0', '@', '0', '@', '#,##0', '@', '@', '@', '@', 'yyyy-mm-dd hh:mm', '@', '@', '#,##0']]);
   rng.setValues([[dept.orgName, dept.name, String(b.date), memo || '선결제 단체 차감',
-    amount, '선결제 단체(' + people + '명)' + (memo ? ' - ' + memo : ''), people, '', '',
-    dept.orgCode, dept.code, dateFlag_(String(b.date)), '', new Date(), '사장님 대리입력', '선결제차감']]);
+    0, '선결제 단체(' + people + '명)' + (memo ? ' - ' + memo : ''), people, '', '',
+    dept.orgCode, dept.code, dateFlag_(String(b.date)), '', new Date(), '선결제 대리입력', '선결제차감', amount]]);
 
   const newBalance = prepaidBalance_(dept.code);
   return json_({ ok: true, amount: amount, balance: newBalance });
@@ -999,28 +1044,32 @@ function insertOrderRow_(dept, dateStr, names, items, tag) {
   const over = Math.max(0, total - getSettings_().limit * people);
   const billed = total - over;
 
-  // 선결제 잔액이 청구금액을 전부 덮을 만큼 남아있으면, 이번 건은 청구하지 않고 잔액에서 자동으로 차감해요.
-  // (잔액이 모자라면 안전하게 평소처럼 정상 청구로 처리해요 — 일부만 차감하는 복잡한 분할은 하지 않아요.)
+  // 선결제 잔액을 먼저 사용하고, 부족한 청구 차액은 현장결제로 기록해요.
   let paymentMethod = '';
+  let prepaidUsed = 0;
   const balance = prepaidBalance_(dept.code);
-  if (balance > 0 && balance >= billed && billed > 0) {
-    deductPrepaid_(dept, billed, String(dateStr) + ' 주문 자동차감 (' + menus.join(', ') + ')');
-    paymentMethod = '선결제차감';
+  if (balance > 0 && billed > 0) {
+    prepaidUsed = Math.min(balance, billed);
+    deductPrepaid_(dept, prepaidUsed, String(dateStr) + ' 주문 자동차감 (' + menus.join(', ') + ')');
+    paymentMethod = '선결제주문';
   }
 
   setupLog();
   const log = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_LOG);
   const row = log.getLastRow() + 1;
   const rng = log.getRange(row, 1, 1, LOG_COLS);
-  rng.setNumberFormats([['@', '@', '@', '@', '#,##0', '@', '0', '@', '#,##0', '@', '@', '@', '@', 'yyyy-mm-dd hh:mm', '@', '@']]);
+  rng.setNumberFormats([['@', '@', '@', '@', '#,##0', '@', '0', '@', '#,##0', '@', '@', '@', '@', 'yyyy-mm-dd hh:mm', '@', '@', '#,##0']]);
+  const statementAmount = prepaidUsed > 0 ? 0 : billed;
+  const onsite = over + (prepaidUsed > 0 ? billed - prepaidUsed : 0);
   rng.setValues([[dept.orgName, dept.name, String(dateStr), menus.join(', '),
-    billed, persons.join(', '), people, over > 0 ? '초과' : '', over || '',
-    dept.orgCode, dept.code, dateFlag_(String(dateStr)), '', new Date(), tag || '', paymentMethod]]);
-  return json_({ ok: true, total: total, over: over, paymentMethod: paymentMethod });
+    statementAmount, persons.join(', '), people, over > 0 ? '초과' : '', onsite || '',
+    dept.orgCode, dept.code, dateFlag_(String(dateStr)), '', new Date(), tag || '', paymentMethod, prepaidUsed || '']]);
+  return json_({ ok: true, total: total, over: over, onsite: onsite, prepaidUsed: prepaidUsed,
+    balance: prepaidBalance_(dept.code), paymentMethod: paymentMethod });
 }
 
 // 사장님이 담당자를 대신해 과거 날짜 주문을 몰아서 입력할 때 씀. PIN·오늘의 번호 없이 사장님 PIN만 확인.
-// '사장님 대리입력'으로 표시되어, 일자별 매출 집계에서는 자동으로 빠져요 (정산서·정산현황에는 그대로 포함돼요).
+// '사장님 대리입력'으로 표시해도 일자별 매출에는 포함하고, 정산서·정산현황에도 주문 날짜 기준으로 포함해요.
 function ownerAddOrder_(b) {
   const chk = checkOwner_(b.pin);
   if (!chk.ok) return json_(chk);
@@ -1086,6 +1135,8 @@ function doPost(e) {
       if (b.action === 'ownerAdd') return ownerAddOrder_(b);        // 사장님: 과거 날짜 주문 대리 입력
       if (b.action === 'ownerAddBatch') return ownerAddOrdersBatch_(b); // 사장님: 여러 건 한 번에 대리 입력
       if (b.action === 'prepaidDeduct') return prepaidDeductSimple_(b); // 사장님: 선결제 잔액에서 금액만 바로 차감
+      if (b.action === 'prepaidDeptDeduct') return prepaidDeductDept_(b);
+      if (b.action === 'prepaidCharge') return prepaidChargeOwner_(b);
       const dept = readMaster_().filter(d => d.code === b.deptCode)[0];
       if (!dept) return json_({ ok: false, message: '부서를 찾을 수 없어요.' });
       const chk = checkPin_(dept, b.pin);

@@ -218,7 +218,7 @@ const el = (tag,attrs={},...kids)=>{const e=document.createElement(tag);for(cons
 
 const params = new URLSearchParams(location.search);
 const ED={pendingBatches:[]};
-const S = { spin:"", demoStmtCache:{}, demoDownloads:{}, popular:["치즈버거 세트","불고기버거 세트","버팔로윙(7개) 세트"], from:null, names:[""], get people(){return this.names.length}, cfg:Object.assign({},DEFAULT_CFG), org:null, dept:null, pin:"", tab:"set", cart:{}, sheetRows:[], demo:!CONFIG.SCRIPT_URL };
+const S = { spin:"", demoStmtCache:{}, demoDownloads:{}, popular:["치즈버거 세트","불고기버거 세트","버팔로윙(7개) 세트"], from:null, names:[""], get people(){return this.names.length}, cfg:Object.assign({},DEFAULT_CFG), org:null, dept:null, pin:"", tab:"set", cart:{}, sheetRows:[], lastPayment:null, demo:!CONFIG.SCRIPT_URL };
 
 function demoSpin(){const d=new Date();return String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,"0")}
 function demoDigit(){const d=new Date();return String((d.getDate()*7+d.getMonth()+3)%10)}
@@ -255,11 +255,11 @@ function render(screen){
   clearInterval(K.timer); const app=$("#app"); app.replaceChildren(); app.className="wrap";
   if(S.demo) app.append(el("div",{class:"demo"},"체험 화면입니다. 실제 시트에는 저장되지 않아요. 입력할 4자리는 부서 PIN 123 + 오늘의 번호 "+demoDigit()+" = 123"+demoDigit()+" 입니다. (실제 오늘의 번호는 매장에서만 알려 줘요) 정산서 PIN은 "+demoSpin()+" (년월 4자리 예시)입니다."));
   const bar=el("div",{class:"topbar"},el("div",{class:"brand"},S.cfg.appName));
-  if(screen!==pickOrg&&screen!==kitchenLogin&&screen!==kitchenScreen&&screen!==ownerHome&&screen!==salesScreen&&screen!==editApprovalScreen&&screen!==obOrgScreen&&screen!==obDeptScreen&&screen!==obBuilder&&screen!==pdOrgScreen&&screen!==pdDeptScreen&&screen!==pdBuilder)
+  if(screen!==pickOrg&&screen!==kitchenLogin&&screen!==kitchenScreen&&screen!==ownerHome&&screen!==salesScreen&&screen!==editApprovalScreen&&screen!==obOrgScreen&&screen!==obDeptScreen&&screen!==obBuilder&&screen!==pdOrgScreen&&screen!==pdDeptScreen&&screen!==pdBuilder&&screen!==prepaidChargeScreen&&screen!==deptPrepaidScreen)
     bar.append(el("button",{class:"homebtn",onclick:goHome},"\u2302 \uCC98\uC74C\uC73C\uB85C"));
   app.append(bar);
   screen(app);
-  if(screen!==kitchenLogin&&screen!==kitchenScreen&&screen!==ownerHome&&screen!==salesScreen&&screen!==editApprovalScreen&&screen!==obOrgScreen&&screen!==obDeptScreen&&screen!==obBuilder&&screen!==pdOrgScreen&&screen!==pdDeptScreen&&screen!==pdBuilder&&screen!==privacyScreen)
+  if(screen!==kitchenLogin&&screen!==kitchenScreen&&screen!==ownerHome&&screen!==salesScreen&&screen!==editApprovalScreen&&screen!==obOrgScreen&&screen!==obDeptScreen&&screen!==obBuilder&&screen!==pdOrgScreen&&screen!==pdDeptScreen&&screen!==pdBuilder&&screen!==prepaidChargeScreen&&screen!==deptPrepaidScreen&&screen!==privacyScreen)
     app.append(el("button",{class:"back",style:"margin-top:26px;text-decoration:underline",onclick:()=>{S.from=screen;render(privacyScreen)}},"개인정보 처리방침"));
 }
 function pickOrg(app){
@@ -305,7 +305,8 @@ function homeScreen(app){
   app.append(popularCard());
   const g=el("div",{class:"orgs"});
   g.append(el("button",{class:"big",onclick:()=>{S.cart={};S.names=[""];S.tab=TABS[0][0];render(orderScreen)}},"주문 입력"),
-    el("button",{class:"big",onclick:()=>{S.spin="";render(spinScreen)}},"정산서 보기 · 다운로드"));
+    el("button",{class:"big",onclick:()=>{S.spin="";render(spinScreen)}},"정산서 보기 · 다운로드"),
+    el("button",{class:"big",onclick:()=>{DP.added=[];render(deptPrepaidScreen)}},"선결제"));
   app.append(g, storeCard());
 }
 function orderScreen(app){
@@ -384,20 +385,25 @@ function tryConfirm(){
 }
 async function submit(t,over,ov,sh){
   const payload={org:S.org,orgName:DATA[S.org].name,deptCode:S.dept.code,deptName:S.dept.name,pin:S.pin,date:S.date,names:S.names,people:S.people,items:items(),total:t,over:over,reqId:newReqId()};
-  let ok=true,msg="";
-  if(S.demo){ S.sheetRows.push(payload) }
+  let ok=true,msg="",result={};
+  if(S.demo){ S.sheetRows.push(payload);S.lastPayment=null }
   else{
     try{const r=await apiFetch(CONFIG.SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(payload)});
-      const j=await r.json(); ok=!!j.ok; msg=j.message||""}catch(e){ok=false;msg="연결에 실패했어요. 입력이 저장되지 않았으니 다시 시도해 주세요."}
+      result=await r.json();ok=!!result.ok;msg=result.message||""}catch(e){ok=false;msg="연결에 실패했어요. 입력이 저장되지 않았으니 다시 시도해 주세요."}
   }
   ov.remove();
   if(!ok){alert(msg||"저장에 실패했어요.");return}
+  if(!S.demo)S.lastPayment={prepaidUsed:Number(result.prepaidUsed)||0,onsite:Number(result.onsite)||0,balance:Number(result.balance)||0};
   render(doneScreen);
 }
 function doneScreen(app){
   const last=S.demo?S.sheetRows[S.sheetRows.length-1]:null;
   app.append(el("div",{class:"card",style:"text-align:center"},el("div",{class:"done-mark"},"입력 완료"),
     el("p",{},S.names.join(", ")+" · "+S.date+" · "+won(total()))));
+  if(S.lastPayment&&S.lastPayment.prepaidUsed>0)app.append(el("div",{class:"card"},
+    el("div",{class:"line"},el("span",{class:"t"},"선결제 사용"),el("span",{class:"a"},won(S.lastPayment.prepaidUsed))),
+    el("div",{class:"line"},el("span",{class:"t"},"현장결제"),el("span",{class:"a"},won(S.lastPayment.onsite))),
+    el("div",{class:"line"},el("span",{class:"t"},"남은 선결제 잔액"),el("span",{class:"a"},won(S.lastPayment.balance)))));
   if(total()>limitNow())app.append(el("div",{class:"warn"},"한도 초과분 "+won(total()-limitNow())+"은 매장에서 직접 결제해 주세요."));
   app.append(el("button",{class:"go",onclick:()=>{S.cart={};S.names=[""];render(orderScreen)}},"다음 사람 입력"),
     el("button",{class:"sec",onclick:()=>render(homeScreen)},"처음으로"),
@@ -646,10 +652,11 @@ function kitchenLogin(app){
 function ownerHome(app){
   app.append(el("h1",{},"사장님 메뉴"));
   const g=el("div",{class:"orgs"});
-  g.append(el("button",{class:"big",onclick:()=>render(kitchenScreen)},"오늘 주문 확인 (포장)"),
-    el("button",{class:"big",onclick:()=>render(salesScreen)},"일자별 매출 확인"),
+  g.append(el("button",{class:"big",onclick:()=>render(kitchenScreen)},"오늘 주문 확인 · 포장"),
+    el("button",{class:"big",onclick:()=>render(salesScreen)},"일자별 매출 · 마감 확인"),
     el("button",{class:"big",onclick:()=>render(editApprovalScreen)},"정산서 수정 요청 확인"),
-    el("button",{class:"big",onclick:()=>{OB.org=null;OB.dept=null;OB.added=[];OB.pending=[];render(obOrgScreen)}},"주문 일괄 입력 (대리 입력)"),
+    el("button",{class:"big",onclick:()=>{OB.org=null;OB.dept=null;OB.added=[];OB.pending=[];render(obOrgScreen)}},"누락 주문 대리 입력"),
+    el("button",{class:"big",onclick:()=>{PC.dept=null;PC.balance=0;render(prepaidChargeScreen)}},"선결제 충전"),
     el("button",{class:"big",onclick:()=>{PD.org=null;PD.dept=null;PD.added=[];render(pdOrgScreen)}},"선결제 차감 처리 (단체 주문)"));
   app.append(g, el("button",{class:"back",style:"margin-top:20px",onclick:()=>{K.pin="";render(kitchenLogin)}},"‹ 로그아웃"));
 }
@@ -792,7 +799,7 @@ async function obSubmitBatch(pending){
 const PD={org:null,dept:null,date:today(),added:[],balance:0};
 function pdOrgScreen(app){
   app.append(el("button",{class:"back",onclick:()=>render(ownerHome)},"‹ 사장님 메뉴"));
-  app.append(el("h1",{},"선결제 차감 처리"), el("p",{class:"sub"},"선결제 잔액이 있는 부서의 단체 주문을 이름 없이 금액만으로 빠르게 기록해요. 일자별 매출에는 잡히지 않아요."));
+  app.append(el("h1",{},"선결제 차감 처리"), el("p",{class:"sub"},"부서의 단체 주문 금액을 이름 없이 선결제 잔액에서 차감합니다."));
   const g=el("div",{class:"orgs"});
   Object.entries(DATA).forEach(([code,o])=>g.append(el("button",{class:"big",onclick:()=>{PD.org=code;PD.dept=null;render(pdDeptScreen)}},o.name)));
   app.append(g);
@@ -817,7 +824,7 @@ function pdBuilder(app){
   app.append(el("button",{class:"back",onclick:()=>render(pdDeptScreen)},"‹ 부서 변경"));
   app.append(el("span",{class:"badge"},DATA[PD.org].name+" "+PD.dept.name), el("h1",{},"선결제 차감"));
   app.append(el("div",{class:"salesbox"},el("div",{class:"sub2"},"현재 선결제 잔액"),el("div",{class:"big2"},won(PD.balance))));
-  if(PD.balance<=0)app.append(el("div",{class:"lockbox"},"이 부서는 선결제 잔액이 없어요. 시트 메뉴 [선결제 충전 등록]으로 먼저 충전해 주세요."));
+  if(PD.balance<=0)app.append(el("div",{class:"lockbox"},"이 부서는 선결제 잔액이 없어요. 먼저 선결제를 충전해 주세요."));
   const card=el("div",{class:"card"});
   card.append(el("label",{class:"f",style:"margin-top:0"},"날짜"), el("input",{type:"date",id:"pddate",value:PD.date}));
   card.append(el("label",{class:"f"},"차감 금액"), el("input",{type:"text",inputmode:"numeric",id:"pdamount",placeholder:"예: 180000",autocomplete:"off"}));
@@ -860,6 +867,100 @@ async function pdSubmit(date,amount,people,memo){
       body:JSON.stringify({action:"prepaidDeduct",pin:K.pin,deptCode:PD.dept.code,date,amount,people,memo,reqId:newReqId()})});
     return await r.json();
   }catch(e){return {ok:false,message:"연결에 실패했어요. 잠시 후 다시 시도해 주세요."}}
+}
+const DP={balance:0,added:[]};
+function deptPrepaidScreen(app){
+  app.append(el("button",{class:"back",onclick:()=>render(homeScreen)},"‹ 처음으로"),
+    el("span",{class:"badge"},DATA[S.org].name+" "+S.dept.name),el("h1",{},"선결제"));
+  const box=el("div",{},el("div",{class:"empty"},"불러오는 중…"));app.append(box);
+  fetchDeptPrepaidBalance().then(j=>{
+    if(!box.isConnected)return;
+    box.replaceChildren();
+    if(!j.ok){box.append(el("div",{class:"card"},el("div",{class:"err"},j.message||"잔액을 불러오지 못했어요.")));return}
+    DP.balance=j.balance;
+    box.append(el("div",{class:"salesbox"},el("div",{class:"sub2"},"현재 선결제 잔액"),el("div",{class:"big2"},won(DP.balance))));
+    if(DP.balance<=0)box.append(el("div",{class:"lockbox"},"사용 가능한 선결제 잔액이 없습니다."));
+    const card=el("div",{class:"card"});
+    card.append(el("label",{class:"f",style:"margin-top:0"},"주문 날짜"),el("input",{type:"date",id:"dpreDate",value:today()}),
+      el("label",{class:"f"},"차감 금액"),el("input",{type:"text",inputmode:"numeric",id:"dpreAmount",placeholder:"예: 180000",autocomplete:"off"}),
+      el("label",{class:"f"},"인원 (선택)"),el("input",{type:"text",inputmode:"numeric",id:"dprePeople",placeholder:"예: 20",autocomplete:"off"}),
+      el("label",{class:"f"},"메모 (선택)"),el("input",{type:"text",id:"dpreMemo",placeholder:"예: 단체 주문",autocomplete:"off"}));
+    const err=el("div",{class:"err"}),go=el("button",{class:"go",style:"margin-top:10px"},"선결제 차감");
+    go.disabled=DP.balance<=0;
+    go.addEventListener("click",async()=>{
+      err.textContent="";
+      const date=$("#dpreDate").value,amount=Number($("#dpreAmount").value.replace(/[^0-9]/g,""));
+      const people=Number($("#dprePeople").value.replace(/[^0-9]/g,""))||1,memo=$("#dpreMemo").value.trim();
+      if(!date){err.textContent="주문 날짜를 선택해 주세요.";return}
+      if(!amount||amount<=0){err.textContent="차감 금액을 입력해 주세요.";return}
+      if(amount>DP.balance){err.textContent="현재 잔액("+won(DP.balance)+")보다 큰 금액은 차감할 수 없어요.";return}
+      go.disabled=true;go.textContent="처리 중…";
+      const res=await submitDeptPrepaidDeduction(date,amount,people,memo);
+      if(!res.ok){go.disabled=false;go.textContent="선결제 차감";err.textContent=res.message||"처리에 실패했어요.";return}
+      DP.balance=res.balance;DP.added.unshift({date,amount,people,memo});
+      render(deptPrepaidScreen);
+    });
+    card.append(err,go);box.append(card);
+    if(DP.added.length){
+      const hist=el("div",{class:"card",style:"margin-top:14px"},el("h2",{},"이번에 처리한 내역 ("+DP.added.length+"건)"));
+      DP.added.forEach(a=>hist.append(el("div",{class:"line"},
+        el("span",{class:"t"},md(a.date)+" · "+a.people+"명"+(a.memo?" · "+a.memo:"")),
+        el("span",{class:"a"},won(a.amount)))));
+      box.append(hist);
+    }
+  }).catch(()=>{if(box.isConnected)box.replaceChildren(el("div",{class:"card"},el("div",{class:"err"},"연결에 실패했어요.")))});
+}
+async function fetchDeptPrepaidBalance(){
+  if(S.demo)return {ok:true,balance:S.demoBalances&&S.demoBalances[S.dept.code]!==undefined?S.demoBalances[S.dept.code]:18000};
+  try{const r=await apiFetch(CONFIG.SCRIPT_URL+"?action=deptPrepaidBalance&pin="+K.pin+"&dept="+encodeURIComponent(S.dept.code));const j=await r.json();
+    if(!j.ok||typeof j.balance!=="number")return {ok:false,message:"Apps Script 최신 버전 배포 후 이용할 수 있어요."};return j}
+  catch(e){return {ok:false,message:"연결에 실패했어요."}}
+}
+async function submitDeptPrepaidDeduction(date,amount,people,memo){
+  if(S.demo){
+    const balance=(S.demoBalances&&S.demoBalances[S.dept.code]!==undefined)?S.demoBalances[S.dept.code]:DP.balance;
+    if(amount>balance)return {ok:false,message:"선결제 잔액이 부족해요."};
+    S.demoBalances=S.demoBalances||{};S.demoBalances[S.dept.code]=balance-amount;return {ok:true,balance:balance-amount};
+  }
+  try{const r=await apiFetch(CONFIG.SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
+    body:JSON.stringify({action:"prepaidDeptDeduct",pin:K.pin,deptCode:S.dept.code,date,amount,people,memo,reqId:newReqId()})});return await r.json()}
+  catch(e){return {ok:false,message:"연결에 실패했어요."}}
+}
+const PC={dept:null,balance:0};
+function prepaidChargeScreen(app){
+  app.append(el("button",{class:"back",onclick:()=>render(ownerHome)},"‹ 사장님 메뉴"),el("h1",{},"선결제 충전"));
+  if(!PC.dept){
+    const inp=el("input",{type:"search",placeholder:"부서 검색",autocomplete:"off","aria-label":"부서 검색"});
+    const list=el("div",{class:"dlist"});
+    const all=Object.entries(DATA).flatMap(([orgCode,o])=>o.depts.map(d=>({orgCode,orgName:o.name,code:d.code,name:d.name})));
+    const draw=()=>{list.replaceChildren();const q=inp.value.trim();const matches=all.filter(d=>(d.orgName+" "+d.name).includes(q));
+      if(!matches.length)list.append(el("div",{class:"empty"},"검색 결과가 없어요."));
+      matches.forEach(d=>list.append(el("button",{onclick:async()=>{PC.dept=d;PC.balance=await pdFetchBalance(d.code);render(prepaidChargeScreen)}},d.orgName+" · "+d.name)))};
+    inp.addEventListener("input",draw);app.append(el("div",{class:"card"},inp,list));draw();return;
+  }
+  app.append(el("button",{class:"back",onclick:()=>{PC.dept=null;render(prepaidChargeScreen)}},"‹ 부서 다시 선택"),
+    el("span",{class:"badge"},PC.dept.orgName+" "+PC.dept.name),
+    el("div",{class:"salesbox"},el("div",{class:"sub2"},"현재 선결제 잔액"),el("div",{class:"big2"},won(PC.balance))));
+  const card=el("div",{class:"card"});
+  card.append(el("label",{class:"f",style:"margin-top:0"},"충전 금액"),el("input",{type:"text",inputmode:"numeric",id:"pcAmount",placeholder:"예: 100000",autocomplete:"off"}),
+    el("label",{class:"f"},"메모 (선택)"),el("input",{type:"text",id:"pcMemo",placeholder:"예: 10월 선결제",autocomplete:"off"}));
+  const err=el("div",{class:"err"}),go=el("button",{class:"go",style:"margin-top:10px"},"충전 등록");
+  go.addEventListener("click",async()=>{
+    err.textContent="";const amount=Number($("#pcAmount").value.replace(/[^0-9]/g,"")),memo=$("#pcMemo").value.trim();
+    if(!amount||amount<=0){err.textContent="충전 금액을 입력해 주세요.";return}
+    go.disabled=true;go.textContent="등록 중…";
+    const res=await submitPrepaidCharge(amount,memo);
+    go.disabled=false;go.textContent="충전 등록";
+    if(!res.ok){err.textContent=res.message||"충전에 실패했어요.";return}
+    PC.balance=res.balance;$("#pcAmount").value="";$("#pcMemo").value="";render(prepaidChargeScreen);
+  });
+  card.append(err,go);app.append(card);
+}
+async function submitPrepaidCharge(amount,memo){
+  if(S.demo){S.demoBalances=S.demoBalances||{};const current=S.demoBalances[PC.dept.code]!==undefined?S.demoBalances[PC.dept.code]:18000;const balance=current+amount;S.demoBalances[PC.dept.code]=balance;return {ok:true,balance};}
+  try{const r=await apiFetch(CONFIG.SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
+    body:JSON.stringify({action:"prepaidCharge",pin:K.pin,deptCode:PC.dept.code,amount,memo,reqId:newReqId()})});return await r.json()}
+  catch(e){return {ok:false,message:"연결에 실패했어요."}}
 }
 async function fetchPendingEdits(){
   if(S.demo)return {ok:true,batches:ED.pendingBatches};
@@ -938,27 +1039,29 @@ function salesScreen(app){
     box.replaceChildren();
     if(!j.ok){box.append(el("div",{class:"card"},el("div",{class:"err"},j.message||"불러오지 못했어요.")));return}
     const sb=el("div",{class:"salesbox"},
-      el("div",{class:"big2"},won(j.total)),
-      el("div",{class:"sub2"},"청구 매출 · 주문 "+j.count+"건"+(j.over>0?" · 현장결제(별도) "+won(j.over):"")));
+      el("div",{class:"big2"},won(Number(j.gross)||((Number(j.total)||0)+(Number(j.over)||0)+(Number(j.prepaid)||0)))),
+      el("div",{class:"sub2"},"총 주문 매출 · 주문 "+j.count+"건 · 청구 "+won(Number(j.total)||0)+" · 현장결제 "+won(Number(j.over)||0)+" · 선결제 사용 "+won(Number(j.prepaid)||0)));
     box.append(sb);
     if(j.enteredToday&&j.enteredToday.count&&K.salesDate===j.inputDate){
       const detail=el("details",{class:"lateSales"});
-      detail.append(el("summary",{},"오늘 입력된 주문 "+won(j.enteredToday.total)+" ("+j.enteredToday.count+"건)"+(j.enteredToday.over>0?" · 현장결제 "+won(j.enteredToday.over):"")),
-        el("div",{class:"sub2"},"입력일시 기준 별도 집계 · 주문 날짜는 아래 내역에서 확인"));
+      const enteredPrepaid=Number(j.enteredToday.prepaid)||0, enteredOver=Number(j.enteredToday.over)||0;
+      const enteredGross=Number(j.enteredToday.gross)||(Number(j.enteredToday.total)||0)+enteredOver+enteredPrepaid;
+      detail.append(el("summary",{},"오늘 입력된 주문 "+won(enteredGross)+" ("+j.enteredToday.count+"건)"),
+        el("div",{class:"sub2"},"선결제 사용 "+won(enteredPrepaid)+" · 현장결제 "+won(enteredOver)));
       const lt=el("table",{class:"mtable"});
-      lt.append(el("tr",{},el("th",{},"주문 날짜"),el("th",{},"기관"),el("th",{},"부서"),el("th",{},"이름"),el("th",{},"입력시간"),el("th",{style:"text-align:right"},"청구"),el("th",{style:"text-align:right"},"현장결제")));
-      j.enteredToday.rows.forEach(r=>lt.append(el("tr",{},el("td",{},r.date),el("td",{},r.org),el("td",{},r.dept),el("td",{},el("span",{class:"pc"},(r.people||1)+"명"),r.names),el("td",{},r.time),el("td",{class:"r"},won(r.amount)),el("td",{class:"r"},won(r.over)))));
+      lt.append(el("tr",{},el("th",{},"주문 날짜"),el("th",{},"기관"),el("th",{},"부서"),el("th",{},"이름"),el("th",{},"입력시간"),el("th",{style:"text-align:right"},"주문액"),el("th",{style:"text-align:right"},"선결제"),el("th",{style:"text-align:right"},"현장")));
+      j.enteredToday.rows.forEach(r=>lt.append(el("tr",{},el("td",{},r.date),el("td",{},r.org),el("td",{},r.dept),el("td",{},el("span",{class:"pc"},(r.people||1)+"명"),r.names),el("td",{},r.time),el("td",{class:"r"},won(Number(r.gross)||(Number(r.amount)||0)+(Number(r.over)||0)+(Number(r.prepaid)||0))),el("td",{class:"r"},won(Number(r.prepaid)||0)),el("td",{class:"r"},won(Number(r.over)||0)))));
       detail.append(el("div",{class:"scroll"},lt));
       box.append(detail);
     }
     if(!j.rows.length){box.append(el("div",{class:"card"},el("div",{class:"empty"},"이 날짜에는 이용 내역이 없어요.")));return}
     const t=el("table",{class:"mtable"});
-    t.append(el("tr",{},el("th",{},"기관"),el("th",{},"부서"),el("th",{},"이름"),el("th",{style:"text-align:right"},"금액")));
+    t.append(el("tr",{},el("th",{},"기관"),el("th",{},"부서"),el("th",{},"이름"),el("th",{style:"text-align:right"},"주문액")));
     j.rows.forEach(r=>{
-      const tr=el("tr",{},el("td",{},r.org),el("td",{},r.dept),el("td",{},el("span",{class:"pc"},(r.people||1)+"명"),r.names),el("td",{class:"r"},won(r.amount)));
+      const tr=el("tr",{},el("td",{},r.org),el("td",{},r.dept),el("td",{},el("span",{class:"pc"},(r.people||1)+"명"),r.names),el("td",{class:"r"},won(Number(r.gross)||(Number(r.amount)||0)+(Number(r.over)||0)+(Number(r.prepaid)||0))));
       if(r.over>0)tr.append();
       t.append(tr);
-      if(r.over>0){const sub=el("tr",{},el("td",{colspan:"4",style:"padding:0 4px 8px;font-size:12px;color:var(--ketchup)"},r.time+" · 현장결제 "+won(r.over)+" 별도"));t.append(sub)}
+      if(r.over>0||r.prepaid>0){const sub=el("tr",{},el("td",{colspan:"4",style:"padding:0 4px 8px;font-size:12px;color:var(--ketchup)"},r.time+" · 청구 "+won(r.amount)+" · 선결제 "+won(r.prepaid)+" · 현장결제 "+won(r.over)));t.append(sub)}
     });
     box.append(el("div",{class:"card"},el("h2",{style:"font-size:17px"},"건별 내역 ("+j.rows.length+"건)"),el("div",{class:"scroll"},t)));
   }).catch(()=>{box.replaceChildren(el("div",{class:"card"},el("div",{class:"err"},"연결에 실패했어요. 잠시 후 다시 시도해 주세요.")))});
